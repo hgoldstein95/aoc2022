@@ -1,0 +1,6 @@
+(library
+ (name day2)
+ (libraries base base_quickcheck stdio)
+ (preprocess
+  (pps ppx_jane))
+ (inline_tests))

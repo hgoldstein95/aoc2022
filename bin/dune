@@ -1,0 +1,32 @@
+(executable
+ (name day1_exe)
+ (public_name day1_exe)
+ (libraries base base_quickcheck stdio day1)
+ (modules day1_exe)
+ (preprocess
+  (pps ppx_jane)))
+
+(executable
+ (name day2_exe)
+ (public_name day2_exe)
+ (libraries base base_quickcheck stdio day2)
+ (modules day2_exe)
+ (preprocess
+  (pps ppx_jane)))
+
+(executable
+ (name day3_exe)
+ (public_name day3_exe)
+ (libraries base base_quickcheck stdio day3)
+ (modules day3_exe)
+ (preprocess
+  (pps ppx_jane)))
+
+(executable
+ (name day4_exe)
+ (public_name day4_exe)
+ (libraries base base_quickcheck stdio day4)
+ (modules day4_exe)
+ (preprocess
+  (pps ppx_jane)))
+
