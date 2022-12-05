@@ -45,8 +45,21 @@ val part2 : string -> string
 open! Base
 open! Stdio
 
+let example = ""
+
 let part1 _ = \"\"
+
+let%expect_test _ =
+  let result = part1 example in
+  print_endline result;
+  [%expect {|  |}]
+
 let part2 _ = \"\"
+
+let%expect_test _ =
+  let result = part2 example in
+  print_endline result;
+  [%expect {|  |}]
 "
 
   echo > "dune" "\

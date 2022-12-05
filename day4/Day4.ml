@@ -5,13 +5,7 @@ type range = { lower : int; upper : int } [@@deriving sexp]
 
 let contains r1 r2 = r1.lower <= r2.lower && r2.upper <= r1.upper
 let overlaps r1 r2 = Int.max r1.lower r2.lower <= Int.min r1.upper r2.upper
-
-let example = {|2-4,6-8
-2-3,4-5
-5-7,7-9
-2-8,3-7
-6-6,4-6
-2-6,4-8|}
+let example = "2-4,6-8\n2-3,4-5\n5-7,7-9\n2-8,3-7\n6-6,4-6\n2-6,4-8"
 
 let parse_ranges s =
   let matches =
