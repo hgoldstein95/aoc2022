@@ -30,7 +30,6 @@
  (preprocess
   (pps ppx_jane)))
 
-
 (executable
  (name day5_exe)
  (public_name day5_exe)
@@ -39,3 +38,10 @@
  (preprocess
   (pps ppx_jane)))
 
+(executable
+ (name day6_exe)
+ (public_name day6_exe)
+ (libraries base base_quickcheck stdio day6)
+ (modules day6_exe)
+ (preprocess
+  (pps ppx_jane)))

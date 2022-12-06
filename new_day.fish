@@ -28,7 +28,7 @@ echo >> "bin/dune" "\
 (executable
  (name day$DAY_exe)
  (public_name day$DAY_exe)
- (libraries base base_quickcheck stdio day$DAY)
+ (libraries core stdio day$DAY)
  (modules day$DAY_exe)
  (preprocess
   (pps ppx_jane)))
@@ -42,10 +42,10 @@ val part2 : string -> string
 "
 
   echo > "Day$DAY.ml" "\
-open! Base
+open! Core
 open! Stdio
 
-let example = ""
+let example = \"\"
 
 let part1 _ = \"\"
 
