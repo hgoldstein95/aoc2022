@@ -65,7 +65,7 @@ let%expect_test _ =
   echo > "dune" "\
 (library
   (name day$DAY)
-  (libraries base base_quickcheck stdio)
+  (libraries core stdio)
   (preprocess (pps ppx_jane))
   (inline_tests))
 "
