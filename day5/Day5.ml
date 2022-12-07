@@ -33,7 +33,7 @@ module Command = struct
 end
 
 module Towers = struct
-  type t = char list array [@@deriving sexp]
+  type t = char list list [@@deriving sexp]
   (** Each tower list is stored from top to bottom for easy access. *)
 
   let of_strings s =
@@ -47,9 +47,10 @@ module Towers = struct
     |> List.map ~f:level_of_string
     |> List.transpose |> Option.value_exn
     |> List.map ~f:List.filter_opt
-    |> List.map ~f:List.rev |> Array.of_list
+    |> List.map ~f:List.rev
 
   let execute (towers : t) ~(cmd : Command.t) : t =
+    let towers = Array.of_list towers in
     for _ = 0 to cmd.count - 1 do
       match towers.(cmd.from - 1) with
       | [] -> failwith "no disks to move"
@@ -57,16 +58,17 @@ module Towers = struct
           towers.(cmd.from - 1) <- from';
           towers.(cmd.to_ - 1) <- crate :: towers.(cmd.to_ - 1)
     done;
-    towers
+    Array.to_list towers
 
   let execute_9001 (towers : t) ~(cmd : Command.t) : t =
+    let towers = Array.of_list towers in
     let from = towers.(cmd.from - 1) in
     if List.length from < cmd.count then failwith "no disks to move"
     else
       let crates, from' = List.split_n from cmd.count in
       towers.(cmd.from - 1) <- from';
       towers.(cmd.to_ - 1) <- List.append crates towers.(cmd.to_ - 1);
-      towers
+      Array.to_list towers
 end
 
 let%expect_test _ =
@@ -86,7 +88,7 @@ let%expect_test _ =
   let result =
     Towers.execute
       ~cmd:{ count = 2; from = 1; to_ = 2 }
-      [| [ 'a'; 'b'; 'c' ]; [ 'd'; 'e'; 'f' ] |]
+      [ [ 'a'; 'b'; 'c' ]; [ 'd'; 'e'; 'f' ] ]
   in
   print_s ([%sexp_of: Towers.t] result);
   [%expect {| ((c) (b a d e f)) |}]
@@ -112,7 +114,7 @@ let%expect_test "parse" =
 let part1 input =
   let t, cs = parse input in
   List.fold_left ~init:t ~f:(fun acc c -> Towers.execute ~cmd:c acc) cs
-  |> Array.to_list |> List.map ~f:List.hd_exn |> String.of_char_list
+  |> List.map ~f:List.hd_exn |> String.of_char_list
 
 let%expect_test _ =
   let result = part1 example in
@@ -122,7 +124,7 @@ let%expect_test _ =
 let part2 input =
   let t, cs = parse input in
   List.fold_left ~init:t ~f:(fun acc c -> Towers.execute_9001 ~cmd:c acc) cs
-  |> Array.to_list |> List.map ~f:List.hd_exn |> String.of_char_list
+  |> List.map ~f:List.hd_exn |> String.of_char_list
 
 let%expect_test _ =
   let result = part2 example in
