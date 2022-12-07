@@ -79,7 +79,12 @@ let%test_unit "TermLine.of_string" =
   |> String.concat ~sep:"\n"
   |> [%test_eq: string] example
 
-module FileSystem = struct
+module FileSystem : sig
+  type t [@@deriving equal, compare, sexp_of]
+
+  val of_string : string -> t
+  val dir_sizes : t -> (fname * int) list
+end = struct
   type fobj = [ `File of int * fname | `Dir of fname ]
   [@@deriving equal, compare, sexp_of]
 
@@ -99,10 +104,10 @@ module FileSystem = struct
     |> List.group ~break:(fun (a, _) (b, _) -> not (String.equal a b))
     |> List.map ~f:(fun xs -> (fst (List.hd_exn xs), List.map ~f:snd xs))
 
-  let of_string s =
+  let of_string (s : string) : t =
     s |> String.split_lines |> List.map ~f:TermLine.of_string |> of_term_lines
 
-  let dir_sizes fs =
+  let dir_sizes (fs : t) : (fname * int) list =
     fs
     |> List.map ~f:(fun (dir, _) ->
            ( dir,
@@ -140,7 +145,7 @@ let part1 input =
   |> List.sum (module Int) ~f:Fn.id
   |> Int.to_string
 
-let%expect_test _ =
+let%expect_test "part1" =
   let result = part1 example in
   print_endline result;
   [%expect {| 95437 |}]
@@ -151,9 +156,9 @@ let min_to_recover dir_sizes =
   let current_used = List.Assoc.find_exn ~equal:String.equal dir_sizes "/" in
   unused_need - (total_space - current_used)
 
-let%expect_test _ =
+let%expect_test "min_to_recover" =
   let result =
-    min_to_recover (example |> FileSystem.of_string |> FileSystem.dir_sizes)
+    example |> FileSystem.of_string |> FileSystem.dir_sizes |> min_to_recover
     |> Int.to_string
   in
   print_endline result;
@@ -167,7 +172,7 @@ let part2 input =
   |> List.min_elt ~compare:(fun (_, a) (_, b) -> Int.compare a b)
   |> Option.value_exn |> snd |> Int.to_string
 
-let%expect_test _ =
+let%expect_test "part2" =
   let result = part2 example in
   print_endline result;
   [%expect {| 24933642 |}]
