@@ -53,3 +53,11 @@
  (modules day7_exe)
  (preprocess
   (pps ppx_jane)))
+
+(executable
+ (name day8_exe)
+ (public_name day8_exe)
+ (libraries core stdio day8)
+ (modules day8_exe)
+ (preprocess
+  (pps ppx_jane)))

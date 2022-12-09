@@ -1,5 +1,6 @@
 #!/usr/bin/env fish
 
+
 if test (count $argv) -lt 1
   echo "Advent of Code 2022 Day Generator"
   echo "Usage: new_day.fish <day>"
@@ -8,6 +9,12 @@ if test (count $argv) -lt 1
 else
   set DAY $argv[1]
   set DAY_exe "$DAY"_exe
+
+  if test -d "day$DAY"
+    echo "Day $argv[1] already exists"
+    exit 1
+  end
+
   echo > "bin/day$DAY_exe.ml" "\
 open Day$DAY
 open Stdio
