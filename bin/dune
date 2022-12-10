@@ -61,3 +61,12 @@
  (modules day8_exe)
  (preprocess
   (pps ppx_jane)))
+
+(executable
+ (name day9_exe)
+ (public_name day9_exe)
+ (libraries core stdio day9)
+ (modules day9_exe)
+ (preprocess
+  (pps ppx_jane)))
+
