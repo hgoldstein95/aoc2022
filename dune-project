@@ -19,7 +19,7 @@
  (name ocaml_aoc2022)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune core base base_quickcheck)
+ (depends ocaml dune)
  (allow_empty)
  (tags
   (topics "to describe" your project)))

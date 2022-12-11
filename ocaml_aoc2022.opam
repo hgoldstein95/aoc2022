@@ -12,9 +12,6 @@ bug-reports: "https://github.com/username/reponame/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.4"}
-  "core"
-  "base"
-  "base_quickcheck"
   "odoc" {with-doc}
 ]
 build: [
