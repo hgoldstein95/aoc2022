@@ -1,0 +1,6 @@
+(library
+ (name day11)
+ (libraries core stdio re)
+ (preprocess
+  (pps ppx_jane))
+ (inline_tests))
