@@ -97,3 +97,12 @@
  (preprocess
   (pps ppx_jane)))
 
+
+(executable
+ (name day13_exe)
+ (public_name day13_exe)
+ (libraries core stdio day13)
+ (modules day13_exe)
+ (preprocess
+  (pps ppx_jane)))
+
