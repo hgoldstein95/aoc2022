@@ -25,7 +25,7 @@ module M (P : Comparable) (V : Comparable) :
 
   let extract q =
     let open Option.Let_syntax in
-    let%map v = Map.min_elt q in
+    let%map v = Map.max_elt q in
     match v with
     | _, [] -> assert false
     | priority, value :: [] -> (priority, value, Map.remove q priority)

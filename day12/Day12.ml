@@ -74,7 +74,19 @@ module ElevationGrid = struct
 
   (* Dijkstra's Algorithm for Single-Source Shortest Path *)
   let shortest_path t ~start ~destination =
-    let module IntLocPQ = PriorityQueue.M (Int) (Loc) in
+    let module IntLocPQ =
+      PriorityQueue.M
+        (struct
+          include Int
+
+          include Comparable.Make (struct
+            include Int
+
+            let compare x y = compare y x
+          end)
+        end)
+        (Loc)
+    in
     let state = Array.map ~f:(Array.map ~f:(fun _ -> (`Unvisited, None))) t in
     let pqueue =
       IntLocPQ.empty |> IntLocPQ.insert ~value:start ~priority:0 |> ref
