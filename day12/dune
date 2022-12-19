@@ -1,0 +1,6 @@
+(library
+ (name day12)
+ (libraries core stdio ocamlgraph)
+ (preprocess
+  (pps ppx_jane))
+ (inline_tests))
