@@ -100,15 +100,15 @@ module Sand = struct
     rocks : Rocks.t;
     rock_limit : int;
     sand : Point.t list;
-    sand_source : Point.t;
+    sand_source : Point.t list;
   }
   [@@deriving sexp, equal, compare, fields]
 
   let init rocks =
     let rock_limit = Rocks.limit rocks in
-    { rocks; rock_limit; sand = []; sand_source = { x = 500; y = 0 } }
+    { rocks; rock_limit; sand = []; sand_source = [ { x = 500; y = 0 } ] }
 
-  let drop_sand ~floor ~source state =
+  let drop_sand ~floor state =
     let no_object point =
       let is_rock = Rocks.is_rock state.rocks ~point in
       let is_sand = List.mem ~equal:[%equal: Point.t] state.sand point in
@@ -116,27 +116,49 @@ module Sand = struct
     in
     let on_floor point = point.y + 1 = state.rock_limit + 2 in
     let out_of_bounds point = point.y > state.rock_limit in
-    let rec loop curr =
-      let below = { x = curr.x; y = curr.y + 1 } in
-      let below_left = { x = curr.x - 1; y = curr.y + 1 } in
-      let below_right = { x = curr.x + 1; y = curr.y + 1 } in
-      if floor && on_floor curr then Some curr
-      else if out_of_bounds curr then None
-      else if no_object below then loop below
-      else if no_object below_left then loop below_left
-      else if no_object below_right then loop below_right
-      else if [%equal: Point.t] curr state.sand_source then None
-      else Some curr
+    let rec loop = function
+      | curr :: stack ->
+          let below = { x = curr.x; y = curr.y + 1 } in
+          let below_left = { x = curr.x - 1; y = curr.y + 1 } in
+          let below_right = { x = curr.x + 1; y = curr.y + 1 } in
+          if floor && on_floor curr then Some (curr, stack)
+          else if out_of_bounds curr then None
+          else if no_object below then loop (below :: curr :: stack)
+          else if no_object below_left then loop (below_left :: curr :: stack)
+          else if no_object below_right then loop (below_right :: curr :: stack)
+          else Some (curr, stack)
+      | [] -> None
     in
-    Option.map (loop source) ~f:(fun grain ->
-        { state with sand = grain :: state.sand })
+    Option.map (loop state.sand_source) ~f:(fun (grain, stack) ->
+        { state with sand = grain :: state.sand; sand_source = stack })
 
-  let rec simulate ?(floor = false) state =
-    match drop_sand ~floor ~source:state.sand_source state with
+  let display (state : t) : string =
+    let all_points =
+      Set.union state.rocks (Set.of_list (module Point) state.sand)
+    in
+    let x_min, x_max =
+      let xs = Set.map (module Int) ~f:(fun { x; y = _ } -> x) all_points in
+      (Set.min_elt_exn xs, Set.max_elt_exn xs)
+    in
+    let y_min, y_max =
+      let ys = Set.map (module Int) ~f:(fun { x = _; y } -> y) all_points in
+      (0, Set.max_elt_exn ys)
+    in
+    List.range ~start:`inclusive ~stop:`inclusive y_min y_max
+    |> List.map ~f:(fun y ->
+           List.range ~start:`inclusive ~stop:`inclusive x_min x_max
+           |> List.map ~f:(fun x ->
+                  if List.mem state.sand { x; y } ~equal:Point.equal then 'o'
+                  else if Set.mem state.rocks { x; y } then '#'
+                  else '.')
+           |> String.of_char_list)
+    |> String.concat ~sep:"\n"
+
+  let rec simulate ?(floor = false) ?(print = false) state =
+    if print then print_endline (display state);
+    match drop_sand ~floor state with
     | Some state' -> simulate ~floor state'
-    | None ->
-        if floor then { state with sand = state.sand_source :: state.sand }
-        else state
+    | None -> state
 end
 
 let%expect_test "Path.of_string" =
@@ -164,25 +186,3 @@ let%expect_test "part2" =
   let result = part2 example in
   print_endline result;
   [%expect {| 93 |}]
-
-let display_state (state : Sand.t) : string =
-  let all_points =
-    Set.union state.rocks (Set.of_list (module Point) state.sand)
-  in
-  let x_min, x_max =
-    let xs = Set.map (module Int) ~f:(fun { x; y = _ } -> x) all_points in
-    (Set.min_elt_exn xs, Set.max_elt_exn xs)
-  in
-  let y_min, y_max =
-    let ys = Set.map (module Int) ~f:(fun { x = _; y } -> y) all_points in
-    (0, Set.max_elt_exn ys)
-  in
-  List.range ~start:`inclusive ~stop:`inclusive y_min y_max
-  |> List.map ~f:(fun y ->
-         List.range ~start:`inclusive ~stop:`inclusive x_min x_max
-         |> List.map ~f:(fun x ->
-                if List.mem state.sand { x; y } ~equal:Point.equal then 'o'
-                else if Set.mem state.rocks { x; y } then '#'
-                else '.')
-         |> String.of_char_list)
-  |> String.concat ~sep:"\n"
