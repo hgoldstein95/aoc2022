@@ -132,7 +132,34 @@ module Sand = struct
     Option.map (loop state.sand_source) ~f:(fun (grain, stack) ->
         { state with sand = grain :: state.sand; sand_source = stack })
 
-  let display (state : t) : string =
+  (* let _display (state : t) : string =
+     let all_points =
+       Set.union state.rocks (Set.of_list (module Point) state.sand)
+     in
+     let x_min, x_max =
+       let xs = Set.map (module Int) ~f:(fun { x; y = _ } -> x) all_points in
+       (Set.min_elt_exn xs, Set.max_elt_exn xs)
+     in
+     let y_min, y_max =
+       let ys = Set.map (module Int) ~f:(fun { x = _; y } -> y) all_points in
+       (0, Set.max_elt_exn ys)
+     in
+     List.range ~start:`inclusive ~stop:`inclusive y_min y_max
+     |> List.map ~f:(fun y ->
+            List.range ~start:`inclusive ~stop:`inclusive x_min x_max
+            |> List.map ~f:(fun x ->
+                   if List.mem state.sand { x; y } ~equal:Point.equal then 'o'
+                   else if Set.mem state.rocks { x; y } then '#'
+                   else '.')
+            |> String.of_char_list)
+     |> String.concat ~sep:"\n" *)
+
+  let display_notty (state : t) : Notty.image =
+    let open Notty in
+    let sand = I.string A.(fg lightred) "o" in
+    let rock = I.string A.(fg lightred) "#" in
+    (* let sand_source = I.string A.(fg lightred) "+" in *)
+    let nothing = I.string A.(fg lightred) " " in
     let all_points =
       Set.union state.rocks (Set.of_list (module Point) state.sand)
     in
@@ -144,21 +171,43 @@ module Sand = struct
       let ys = Set.map (module Int) ~f:(fun { x = _; y } -> y) all_points in
       (0, Set.max_elt_exn ys)
     in
-    List.range ~start:`inclusive ~stop:`inclusive y_min y_max
-    |> List.map ~f:(fun y ->
-           List.range ~start:`inclusive ~stop:`inclusive x_min x_max
-           |> List.map ~f:(fun x ->
-                  if List.mem state.sand { x; y } ~equal:Point.equal then 'o'
-                  else if Set.mem state.rocks { x; y } then '#'
-                  else '.')
-           |> String.of_char_list)
-    |> String.concat ~sep:"\n"
+    I.tabulate (x_max - x_min) (y_max - y_min) (fun i j ->
+        let x, y = (i + x_min, j + y_min) in
+        let point = { x; y } in
+        if List.mem state.sand point ~equal:[%equal: Point.t] then sand
+        else if Set.mem state.rocks point then rock (* TODO Sand source *)
+        else nothing)
 
-  let rec simulate ?(floor = false) ?(print = false) state =
-    if print then print_endline (display state);
-    match drop_sand ~floor state with
-    | Some state' -> simulate ~floor state'
-    | None -> state
+  let simulate ?(floor = false) state =
+    let rec loop s =
+      match drop_sand ~floor s with Some s' -> loop s' | None -> s
+    in
+    loop state
+
+  let visualize ?(floor = false) state =
+    let open Lwt.Infix in
+    let open Notty_lwt in
+    let open Notty in
+    let timer () = Lwt_unix.sleep 0.001 >|= fun () -> `Timer in
+    let event term =
+      Lwt_stream.get (Term.events term) >|= function
+      | Some ((`Resize _ | #Unescape.event) as x) -> x
+      | None -> `End
+    in
+
+    let terminal = Term.create () in
+    let rec loop term (e, t) s =
+      e <?> t >>= function
+      | `End | `Key (`Escape, []) | `Key (`ASCII 'C', [ `Ctrl ]) ->
+          Lwt.return_unit
+      | `Timer -> (
+          Term.image term (display_notty s) >>= fun () ->
+          match drop_sand ~floor s with
+          | Some s' -> loop term (e, timer ()) s'
+          | None -> Lwt.return_unit)
+      | _ -> loop term (event term, t) s
+    in
+    Lwt_main.run @@ loop terminal (event terminal, timer ()) state
 end
 
 let%expect_test "Path.of_string" =
@@ -181,6 +230,9 @@ let%expect_test "part1" =
 let part2 input =
   input |> Rocks.of_string |> Sand.init |> Sand.simulate ~floor:true
   |> Sand.sand |> List.length |> Int.to_string
+
+let part2_vis input =
+  input |> Rocks.of_string |> Sand.init |> Sand.visualize ~floor:true
 
 let%expect_test "part2" =
   let result = part2 example in

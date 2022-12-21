@@ -1,7 +1,6 @@
 (library
  (name day10)
  (libraries core stdio)
- (preprocessor_deps example.elfs)
  (preprocess
   (pps ppx_jane))
  (inline_tests))

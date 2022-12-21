@@ -1,6 +1,6 @@
 (library
  (name day14)
- (libraries core stdio angstrom)
+ (libraries core stdio angstrom notty notty.lwt lwt)
  (preprocess
   (pps ppx_jane))
  (inline_tests))
