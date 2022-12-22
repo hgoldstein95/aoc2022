@@ -67,69 +67,6 @@ module Formula = struct
     | Or : bool t list -> bool t
     | Not : bool t -> bool t
 
-  let eval (expr : bool t) (ctx : (string * Point.t) list) : bool =
-    let rec loop : type a. a t -> a = function
-      | Var (s, cmp) -> (
-          let p = List.Assoc.find_exn ctx s ~equal:String.equal in
-          match cmp with `X -> p.x | `Y -> p.y)
-      | Int i -> i
-      | True -> true
-      | False -> false
-      | Le (x, y) -> loop x <= loop y
-      | Equal (p1, p2) -> loop p1 = loop p2
-      | And es -> List.for_all ~f:loop es
-      | Or es -> List.exists ~f:loop es
-      | Not e -> not (loop e)
-      | Add (x, y) -> loop x + loop y
-      | Sub (x, y) -> loop x - loop y
-      | Abs x -> abs (loop x)
-    in
-    loop expr
-
-  let optimize (expr : bool t) : bool t =
-    let rec loop : type a. a t -> a t = function
-      | Var (p, cmp) -> Var (p, cmp)
-      | True -> True
-      | False -> False
-      | Int i -> Int i
-      | Le (x, y) -> (
-          match (loop x, loop y) with
-          | Int x, Int y -> if x <= y then True else False
-          | x, y -> Le (x, y))
-      | Equal (x, y) -> (
-          match (loop x, loop y) with
-          | Int x, Int y -> if x = y then True else False
-          | x, y -> Equal (x, y))
-      | And es -> (
-          let es = List.map es ~f:loop in
-          if List.exists es ~f:(function False -> true | _ -> false) then False
-          else
-            let es =
-              List.filter_map es ~f:(function True -> None | e -> Some e)
-            in
-            match es with [] -> True | [ e ] -> e | es -> And es)
-      | Or es -> (
-          let es = List.map es ~f:loop in
-          if List.exists es ~f:(function True -> true | _ -> false) then True
-          else
-            let es =
-              List.filter_map es ~f:(function False -> None | e -> Some e)
-            in
-            match es with [] -> False | [ e ] -> e | es -> Or es)
-      | Not e -> (
-          match loop e with True -> False | False -> True | e -> Not e)
-      | Add (x, y) -> (
-          match (loop x, loop y) with
-          | Int x, Int y -> Int (x + y)
-          | x, y -> Add (x, y))
-      | Sub (x, y) -> (
-          match (loop x, loop y) with
-          | Int x, Int y -> Int (x - y)
-          | x, y -> Sub (x, y))
-      | Abs x -> ( match loop x with Int x -> Int (abs x) | x -> Abs x)
-    in
-    loop expr
-
   let compile (ctx : Z3.context) (expr : bool t) =
     let open Z3 in
     let module Integer = Z3.Arithmetic.Integer in
@@ -156,48 +93,51 @@ module Formula = struct
     in
     loop expr
 
-  let all es = And es
-  let any es = Or es
+  let all es =
+    if List.exists es ~f:(function False -> true | _ -> false) then False
+    else
+      let es = List.filter_map es ~f:(function True -> None | e -> Some e) in
+      match es with [] -> True | [ e ] -> e | es -> And es
+
+  let any es =
+    if List.exists es ~f:(function True -> true | _ -> false) then True
+    else
+      let es = List.filter_map es ~f:(function False -> None | e -> Some e) in
+      match es with [] -> False | [ e ] -> e | es -> Or es
+
   let ( && ) x y = And [ x; y ]
-  let not x = Not x
-  let ( <= ) x y = Le (x, y)
-  let ( + ) x y = Add (x, y)
-  let ( - ) x y = Sub (x, y)
-  let abs x = Abs x
+  let not = function True -> False | False -> True | e -> Not e
+
+  let ( <= ) x y =
+    match (x, y) with
+    | Int x, Int y -> if x <= y then True else False
+    | x, y -> Le (x, y)
+
+  let ( + ) x y =
+    match (x, y) with Int x, Int y -> Int (x + y) | x, y -> Add (x, y)
+
+  let ( - ) x y =
+    match (x, y) with Int x, Int y -> Int (x - y) | x, y -> Sub (x, y)
+
+  let abs = function Int x -> Int (abs x) | x -> Abs x
   let var s cmp = Var (s, cmp)
-  let equal x y = Equal (x, y)
   let int x = Int x
 
-  let point_equal p1 p2 =
-    let components p =
-      match p with
-      | `Var s -> (Var (s, `X), Var (s, `Y))
-      | `Point p -> Point.T.(Int p.x, Int p.y)
-    in
-    let x1, y1 = components p1 in
-    let x2, y2 = components p2 in
-    Equal (x1, x2) && Equal (y1, y2)
-
-  let distance p1 p2 =
-    let components p =
-      match p with
-      | `Var s -> (Var (s, `X), Var (s, `Y))
-      | `Point p -> Point.T.(Int p.x, Int p.y)
-    in
-    let x1, y1 = components p1 in
-    let x2, y2 = components p2 in
-    abs (x1 - x2) + abs (y1 - y2)
+  let equal x y =
+    match (x, y) with
+    | Int x, Int y -> if x = y then True else False
+    | x, y -> Equal (x, y)
 end
 
 module Sensor = struct
-  type t = { position : Point.t; closest_beakon : Point.t }
+  type t = { position : Point.t; closest_beacon : Point.t }
   [@@deriving sexp, equal, compare, quickcheck]
 
   let angstrom =
     let open Angstrom in
     string "Sensor at " *> Point.angstrom >>= fun position ->
-    string ": closest beacon is at " *> Point.angstrom >>| fun closest_beakon ->
-    { position; closest_beakon }
+    string ": closest beacon is at " *> Point.angstrom >>| fun closest_beacon ->
+    { position; closest_beacon }
 
   let of_string s =
     let open Angstrom in
@@ -207,7 +147,7 @@ module Sensor = struct
 
   let to_string d =
     "Sensor at " ^ Point.to_string d.position ^ ": closest beacon is at "
-    ^ Point.to_string d.closest_beakon
+    ^ Point.to_string d.closest_beacon
 
   let%test_unit "of_string" =
     Quickcheck.test ~sexp_of:[%sexp_of: t] ~trials:1000
@@ -216,14 +156,28 @@ module Sensor = struct
         [%test_eq: t] d (of_string s))
 
   let rules_out_beacon (sensor : t) (candidate : string) : bool Formula.t =
+    let beacon_range =
+      abs (sensor.position.x - sensor.closest_beacon.x)
+      + abs (sensor.position.y - sensor.closest_beacon.y)
+    in
     let open Formula in
-    distance (`Point sensor.position) (`Var candidate)
-    <= distance (`Point sensor.position) (`Point sensor.closest_beakon)
-    && not (point_equal (`Var candidate) (`Point sensor.closest_beakon))
+    let candidate_range =
+      abs (Var (candidate, `X) - Int sensor.position.x)
+      + abs (Var (candidate, `Y) - Int sensor.position.y)
+    in
+    candidate_range <= Int beacon_range
+    && not
+         (equal (Var (candidate, `X)) (Int sensor.closest_beacon.x)
+         && equal (Var (candidate, `Y)) (Int sensor.closest_beacon.y))
 
-  let x_boundaries (sensor : t) : int * int =
-    let range = abs (sensor.position.x - sensor.closest_beakon.x) in
-    (sensor.closest_beakon.x - range, sensor.closest_beakon.x + range)
+  let span_at_y (sensor : t) (y : int) : (int * int) option =
+    let range =
+      abs (sensor.position.x - sensor.closest_beacon.x)
+      + abs (sensor.position.y - sensor.closest_beacon.y)
+    in
+    let x_range = range - abs (sensor.position.y - y) in
+    if x_range < 0 then None
+    else Some (sensor.position.x - x_range, sensor.position.x + x_range)
 end
 
 let%expect_test "SensorData.of_string" =
@@ -231,54 +185,56 @@ let%expect_test "SensorData.of_string" =
   print_s [%sexp (results : Sensor.t list)];
   [%expect
     {|
-    (((position ((x 2) (y 18))) (closest_beakon ((x -2) (y 15))))
-     ((position ((x 9) (y 16))) (closest_beakon ((x 10) (y 16))))
-     ((position ((x 13) (y 2))) (closest_beakon ((x 15) (y 3))))
-     ((position ((x 12) (y 14))) (closest_beakon ((x 10) (y 16))))
-     ((position ((x 10) (y 20))) (closest_beakon ((x 10) (y 16))))
-     ((position ((x 14) (y 17))) (closest_beakon ((x 10) (y 16))))
-     ((position ((x 8) (y 7))) (closest_beakon ((x 2) (y 10))))
-     ((position ((x 2) (y 0))) (closest_beakon ((x 2) (y 10))))
-     ((position ((x 0) (y 11))) (closest_beakon ((x 2) (y 10))))
-     ((position ((x 20) (y 14))) (closest_beakon ((x 25) (y 17))))
-     ((position ((x 17) (y 20))) (closest_beakon ((x 21) (y 22))))
-     ((position ((x 16) (y 7))) (closest_beakon ((x 15) (y 3))))
-     ((position ((x 14) (y 3))) (closest_beakon ((x 15) (y 3))))
-     ((position ((x 20) (y 1))) (closest_beakon ((x 15) (y 3))))) |}]
+    (((position ((x 2) (y 18))) (closest_beacon ((x -2) (y 15))))
+     ((position ((x 9) (y 16))) (closest_beacon ((x 10) (y 16))))
+     ((position ((x 13) (y 2))) (closest_beacon ((x 15) (y 3))))
+     ((position ((x 12) (y 14))) (closest_beacon ((x 10) (y 16))))
+     ((position ((x 10) (y 20))) (closest_beacon ((x 10) (y 16))))
+     ((position ((x 14) (y 17))) (closest_beacon ((x 10) (y 16))))
+     ((position ((x 8) (y 7))) (closest_beacon ((x 2) (y 10))))
+     ((position ((x 2) (y 0))) (closest_beacon ((x 2) (y 10))))
+     ((position ((x 0) (y 11))) (closest_beacon ((x 2) (y 10))))
+     ((position ((x 20) (y 14))) (closest_beacon ((x 25) (y 17))))
+     ((position ((x 17) (y 20))) (closest_beacon ((x 21) (y 22))))
+     ((position ((x 16) (y 7))) (closest_beacon ((x 15) (y 3))))
+     ((position ((x 14) (y 3))) (closest_beacon ((x 15) (y 3))))
+     ((position ((x 20) (y 1))) (closest_beacon ((x 15) (y 3))))) |}]
 
 module Sensors = struct
   type t = Sensor.t list [@@deriving sexp, equal, compare, quickcheck]
 
   let of_string s = s |> String.split_lines |> List.map ~f:Sensor.of_string
 
-  let cannot_contain_beacon (sensors : t) (candidate : string) : bool Formula.t
-      =
-    let open Formula in
-    any
-      (List.map sensors ~f:(fun sensor ->
-           Sensor.rules_out_beacon sensor candidate))
-
   let could_contain_hidden_beacon (sensors : t) (candidate : string) :
       bool Formula.t =
     let open Formula in
-    (not (cannot_contain_beacon sensors candidate))
+    (not
+       (any
+          (List.map sensors ~f:(fun sensor ->
+               Sensor.rules_out_beacon sensor candidate))))
     && all
          (List.map sensors ~f:(fun sensor ->
-              not (point_equal (`Var candidate) (`Point sensor.closest_beakon))))
+              not
+                (equal (Var (candidate, `X)) (Int sensor.closest_beacon.x)
+                && equal (Var (candidate, `Y)) (Int sensor.closest_beacon.y))))
 
-  let x_boundaries (sensors : t) : int * int =
-    let x_boundaries = List.map sensors ~f:Sensor.x_boundaries in
-    let min_x =
-      List.map x_boundaries ~f:fst
-      |> List.min_elt ~compare:Int.compare
-      |> Option.value_exn
+  let spans_at_y (sensors : t) ~(y : int) : (int * int) list =
+    let ranges_overlap (x_lo, x_hi) (y_lo, y_hi) =
+      (x_lo <= y_lo && y_lo <= x_hi) || (y_lo <= x_lo && x_lo <= y_hi)
     in
-    let max_x =
-      List.map x_boundaries ~f:snd
-      |> List.max_elt ~compare:Int.compare
-      |> Option.value_exn
+    let merge_ranges (x_lo, x_hi) (y_lo, y_hi) =
+      (min x_lo y_lo, max x_hi y_hi)
     in
-    (min_x, max_x)
+    let rec collapse_ranges = function
+      | [] -> []
+      | [ x ] -> [ x ]
+      | x :: y :: xs ->
+          if ranges_overlap x y then collapse_ranges (merge_ranges x y :: xs)
+          else x :: collapse_ranges (y :: xs)
+    in
+    List.filter_map sensors ~f:(fun sensor -> Sensor.span_at_y sensor y)
+    |> List.sort ~compare:[%compare: int * int]
+    |> collapse_ranges
 end
 
 let z3_int_from_model ctx model s =
@@ -291,20 +247,8 @@ let z3_int_from_model ctx model s =
   |> Int.of_string
 
 let part1 ?(y = 2_000_000) input =
-  let sensors = Sensors.of_string input in
-  let formula =
-    Formula.optimize
-    @@ Formula.(
-         equal (var "candidate" `Y) (int y)
-         && Sensors.cannot_contain_beacon sensors "candidate")
-  in
-
-  let x_min, x_max = Sensors.x_boundaries sensors in
-  List.range x_min x_max
-  |> List.sum
-       (module Int)
-       ~f:(fun x ->
-         if Formula.eval formula [ ("candidate", { x; y }) ] then 1 else 0)
+  input |> Sensors.of_string |> Sensors.spans_at_y ~y
+  |> List.sum (module Int) ~f:(fun (x1, x2) -> x2 - x1)
   |> Int.to_string
 
 let%expect_test "part1" =
@@ -315,13 +259,12 @@ let%expect_test "part1" =
 let part2 ?(bound = 4_000_000) input =
   let sensors = Sensors.of_string input in
   let formula =
-    Formula.optimize
-    @@ Formula.(
-         int 0 <= var "candidate" `X
-         && var "candidate" `X <= int bound
-         && int 0 <= var "candidate" `Y
-         && var "candidate" `Y <= int bound
-         && Sensors.could_contain_hidden_beacon sensors "candidate")
+    Formula.(
+      int 0 <= var "candidate" `X
+      && var "candidate" `X <= int bound
+      && int 0 <= var "candidate" `Y
+      && var "candidate" `Y <= int bound
+      && Sensors.could_contain_hidden_beacon sensors "candidate")
   in
 
   let open Z3 in
