@@ -70,6 +70,10 @@ let%expect_test \"part2\" =
 "
 
   echo > "dune" "\
+(env
+ (dev
+  (flags
+   (:standard -warn-error -A))))
 (library
   (name day$DAY)
   (libraries core stdio)
