@@ -50,8 +50,6 @@ module Point = struct
       [%quickcheck.generator: t] ~f:(fun d ->
         let s = to_string d in
         [%test_eq: t] d (of_string s))
-
-  let distance p1 p2 = abs (p1.x - p2.x) + abs (p1.y - p2.y)
 end
 
 module Formula = struct
@@ -65,8 +63,8 @@ module Formula = struct
     | Equal : int t * int t -> bool t
     | True : bool t
     | False : bool t
-    | And : bool t * bool t -> bool t
-    | Or : bool t * bool t -> bool t
+    | And : bool t list -> bool t
+    | Or : bool t list -> bool t
     | Not : bool t -> bool t
 
   let eval (expr : bool t) (ctx : (string * Point.t) list) : bool =
@@ -79,8 +77,8 @@ module Formula = struct
       | False -> false
       | Le (x, y) -> loop x <= loop y
       | Equal (p1, p2) -> loop p1 = loop p2
-      | And (e1, e2) -> loop e1 && loop e2
-      | Or (e1, e2) -> loop e1 || loop e2
+      | And es -> List.for_all ~f:loop es
+      | Or es -> List.exists ~f:loop es
       | Not e -> not (loop e)
       | Add (x, y) -> loop x + loop y
       | Sub (x, y) -> loop x - loop y
@@ -94,56 +92,73 @@ module Formula = struct
       | True -> True
       | False -> False
       | Int i -> Int i
-      | Le (Int x, Int y) -> if x <= y then True else False
-      | Le (x, y) -> Le (loop x, loop y)
-      | Equal (Int x, Int y) -> if x = y then True else False
-      | Equal (x, y) -> Equal (loop x, loop y)
-      | And (True, e) -> loop e
-      | And (e, True) -> loop e
-      | And (False, _) -> False
-      | And (_, False) -> False
-      | And (e1, e2) -> And (loop e1, loop e2)
-      | Or (True, _) -> True
-      | Or (_, True) -> True
-      | Or (False, e) -> loop e
-      | Or (e, False) -> loop e
-      | Or (e1, e2) -> Or (loop e1, loop e2)
-      | Not True -> False
-      | Not False -> True
-      | Not e -> Not (loop e)
-      | Add (Int x, Int y) -> Int (x + y)
-      | Add (x, y) -> Add (loop x, loop y)
-      | Sub (Int x, Int y) -> Int (x - y)
-      | Sub (x, y) -> Sub (loop x, loop y)
-      | Abs (Int x) -> Int (abs x)
-      | Abs x -> Abs (loop x)
+      | Le (x, y) -> (
+          match (loop x, loop y) with
+          | Int x, Int y -> if x <= y then True else False
+          | x, y -> Le (x, y))
+      | Equal (x, y) -> (
+          match (loop x, loop y) with
+          | Int x, Int y -> if x = y then True else False
+          | x, y -> Equal (x, y))
+      | And es -> (
+          let es = List.map es ~f:loop in
+          if List.exists es ~f:(function False -> true | _ -> false) then False
+          else
+            let es =
+              List.filter_map es ~f:(function True -> None | e -> Some e)
+            in
+            match es with [] -> True | [ e ] -> e | es -> And es)
+      | Or es -> (
+          let es = List.map es ~f:loop in
+          if List.exists es ~f:(function True -> true | _ -> false) then True
+          else
+            let es =
+              List.filter_map es ~f:(function False -> None | e -> Some e)
+            in
+            match es with [] -> False | [ e ] -> e | es -> Or es)
+      | Not e -> (
+          match loop e with True -> False | False -> True | e -> Not e)
+      | Add (x, y) -> (
+          match (loop x, loop y) with
+          | Int x, Int y -> Int (x + y)
+          | x, y -> Add (x, y))
+      | Sub (x, y) -> (
+          match (loop x, loop y) with
+          | Int x, Int y -> Int (x - y)
+          | x, y -> Sub (x, y))
+      | Abs x -> ( match loop x with Int x -> Int (abs x) | x -> Abs x)
     in
     loop expr
 
-  let compile (expr : bool t) : Z3.Expr.expr =
+  let compile (ctx : Z3.context) (expr : bool t) =
     let open Z3 in
     let module Integer = Z3.Arithmetic.Integer in
-    let ctx = mk_context [] in
     let rec loop : type a. a t -> Expr.expr = function
       | Var (p, cmp) ->
-          Integer.mk_const_s ctx (p ^ match cmp with `X -> "x" | `Y -> "y")
+          Integer.mk_const_s ctx
+            (p ^ "." ^ match cmp with `X -> "x" | `Y -> "y")
       | True -> Boolean.mk_true ctx
       | False -> Boolean.mk_false ctx
       | Int i -> Integer.mk_numeral_i ctx i
       | Le (x, y) -> Arithmetic.mk_le ctx (loop x) (loop y)
       | Equal (x, y) -> Boolean.mk_eq ctx (loop x) (loop y)
-      | And (e1, e2) -> Boolean.mk_and ctx [ loop e1; loop e2 ]
-      | Or (e1, e2) -> Boolean.mk_or ctx [ loop e1; loop e2 ]
+      | And es -> Boolean.mk_and ctx (List.map ~f:loop es)
+      | Or es -> Boolean.mk_or ctx (List.map ~f:loop es)
       | Not e -> Boolean.mk_not ctx (loop e)
       | Add (x, y) -> Arithmetic.mk_add ctx [ loop x; loop y ]
       | Sub (x, y) -> Arithmetic.mk_sub ctx [ loop x; loop y ]
-      | Abs x -> FloatingPoint.mk_abs ctx (loop x)
+      | Abs x ->
+          let x = loop x in
+          Boolean.mk_ite ctx
+            (Arithmetic.mk_ge ctx x (Integer.mk_numeral_i ctx 0))
+            x
+            (Arithmetic.mk_unary_minus ctx x)
     in
     loop expr
 
-  let rec all = function e :: es -> And (e, all es) | [] -> True
-  let rec any = function e :: es -> Or (e, any es) | [] -> False
-  let ( && ) x y = And (x, y)
+  let all es = And es
+  let any es = Or es
+  let ( && ) x y = And [ x; y ]
   let not x = Not x
   let ( <= ) x y = Le (x, y)
   let ( + ) x y = Add (x, y)
@@ -207,7 +222,7 @@ module Sensor = struct
     && not (point_equal (`Var candidate) (`Point sensor.closest_beakon))
 
   let x_boundaries (sensor : t) : int * int =
-    let range = Point.distance sensor.position sensor.closest_beakon in
+    let range = abs (sensor.position.x - sensor.closest_beakon.x) in
     (sensor.closest_beakon.x - range, sensor.closest_beakon.x + range)
 end
 
@@ -266,21 +281,30 @@ module Sensors = struct
     (min_x, max_x)
 end
 
+let z3_int_from_model ctx model s =
+  let open Z3 in
+  Model.get_const_interp_e model (Arithmetic.Integer.mk_const_s ctx s)
+  |> Option.value_exn |> Expr.to_string
+  |> String.filter ~f:(fun x ->
+         not
+           (Char.is_whitespace x || [%equal: char] x '(' || [%equal: char] x ')'))
+  |> Int.of_string
+
 let part1 ?(y = 2_000_000) input =
   let sensors = Sensors.of_string input in
+  let formula =
+    Formula.optimize
+    @@ Formula.(
+         equal (var "candidate" `Y) (int y)
+         && Sensors.cannot_contain_beacon sensors "candidate")
+  in
+
   let x_min, x_max = Sensors.x_boundaries sensors in
   List.range x_min x_max
   |> List.sum
        (module Int)
        ~f:(fun x ->
-         if
-           Formula.eval
-             Formula.(
-               equal (var "candidate" `Y) (int y)
-               && Sensors.cannot_contain_beacon sensors "candidate")
-             [ ("candidate", { x; y }) ]
-         then 1
-         else 0)
+         if Formula.eval formula [ ("candidate", { x; y }) ] then 1 else 0)
   |> Int.to_string
 
 let%expect_test "part1" =
@@ -290,17 +314,24 @@ let%expect_test "part1" =
 
 let part2 ?(bound = 4_000_000) input =
   let sensors = Sensors.of_string input in
-  List.cartesian_product (List.range 0 bound) (List.range 0 bound)
-  |> List.find_exn ~f:(fun (x, y) ->
-         Formula.eval
-           Formula.(
-             int 0 <= var "candidate" `X
-             && var "candidate" `X <= int bound
-             && int 0 <= var "candidate" `Y
-             && var "candidate" `Y <= int bound
-             && Sensors.could_contain_hidden_beacon sensors "candidate")
-           [ ("candidate", { x; y }) ])
-  |> fun (x, y) -> (x * 4_000_000) + y |> Int.to_string
+  let formula =
+    Formula.optimize
+    @@ Formula.(
+         int 0 <= var "candidate" `X
+         && var "candidate" `X <= int bound
+         && int 0 <= var "candidate" `Y
+         && var "candidate" `Y <= int bound
+         && Sensors.could_contain_hidden_beacon sensors "candidate")
+  in
+
+  let open Z3 in
+  let ctx = mk_context [] in
+  let solver = Solver.mk_solver ctx None in
+  let _ = Solver.check solver [ Formula.compile ctx formula ] in
+  let model = Solver.get_model solver |> Option.value_exn in
+  let x = z3_int_from_model ctx model "candidate.x" in
+  let y = z3_int_from_model ctx model "candidate.y" in
+  (x * 4_000_000) + y |> Int.to_string
 
 let%expect_test "part2" =
   let result = part2 ~bound:20 example in

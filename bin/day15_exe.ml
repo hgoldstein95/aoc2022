@@ -10,4 +10,3 @@ let () =
 let () =
   print_string "Part 2: ";
   input |> part2 |> print_endline
-
