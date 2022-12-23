@@ -124,6 +124,7 @@ module Network = struct
            in
            if steps_left < dist then None
            else if Set.mem open_valves other_valve then None
+           else if other_valve.rate <= 0 then None
            else Some (other_valve, other_valve.rate * (steps_left - dist), dist))
 
   let simulate (network : t) : int =
