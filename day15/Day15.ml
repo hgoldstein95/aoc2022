@@ -85,21 +85,22 @@ module Sensor = struct
   let could_contain_hidden_beacon (sensors : t list) (cx : int Formula.t)
       (cy : int Formula.t) : bool Formula.t =
     let open Formula in
-    let rules_out_beacon sensor =
-      let beacon_range =
-        Int (Point.distance sensor.position sensor.closest_beacon)
-      in
+    let rules_out_candidate sensor =
       let candidate_range =
         abs (cx - Int sensor.position.x) + abs (cy - Int sensor.position.y)
       in
+      let beacon_range =
+        Int (Point.distance sensor.position sensor.closest_beacon)
+      in
       candidate_range <= beacon_range
     in
-    (not (any (List.map sensors ~f:rules_out_beacon)))
+    let not_candidate (p : Point.t) =
+      not (equal cx (Int p.x) && equal cy (Int p.y))
+    in
+    (not (any (List.map sensors ~f:rules_out_candidate)))
     && all
          (List.map sensors ~f:(fun sensor ->
-              not
-                (equal cx (Int sensor.closest_beacon.x)
-                && equal cy (Int sensor.closest_beacon.y))))
+              not_candidate sensor.closest_beacon))
 
   let spans_at_y (sensors : t list) ~(y : int) : (int * int) list =
     let span sensor =
@@ -137,16 +138,16 @@ let%expect_test "part1" =
   [%expect {| 26 |}]
 
 let part2 ?(bound = 4_000_000) input =
+  let cx = "candidate.x" in
+  let cy = "candidate.y" in
   let sensors = Sensor.many_of_string input in
   let formula =
-    Formula.(
-      let cx = var "candidate.x" in
-      let cy = var "candidate.y" in
-      int 0 <= cx
-      && cx <= int bound
-      && int 0 <= cy
-      && cy <= int bound
-      && Sensor.could_contain_hidden_beacon sensors cx cy)
+    let open Formula in
+    int 0 <= var cx
+    && var cx <= int bound
+    && int 0 <= var cy
+    && var cy <= int bound
+    && Sensor.could_contain_hidden_beacon sensors (var cx) (var cy)
   in
 
   let open Z3 in
@@ -164,8 +165,8 @@ let part2 ?(bound = 4_000_000) input =
   let solver = Solver.mk_solver ctx None in
   let _ = Solver.check solver [ Formula.compile ctx formula ] in
   let model = Solver.get_model solver |> Option.value_exn in
-  let x = z3_int_from_model ctx model "candidate.x" in
-  let y = z3_int_from_model ctx model "candidate.y" in
+  let x = z3_int_from_model ctx model cx in
+  let y = z3_int_from_model ctx model cy in
   (x * 4_000_000) + y |> Int.to_string
 
 let%expect_test "part2" =

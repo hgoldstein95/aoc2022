@@ -50,13 +50,8 @@ let any es =
     let es = List.filter_map es ~f:(function False -> None | e -> Some e) in
     match es with [] -> False | [ e ] -> e | es -> Or es
 
-let ( && ) x y = And [ x; y ]
-let not = function True -> False | False -> True | e -> Not e
-
-let ( <= ) x y =
-  match (x, y) with
-  | Int x, Int y -> if x <= y then True else False
-  | x, y -> Le (x, y)
+let var s = Var s
+let int x = Int x
 
 let ( + ) x y =
   match (x, y) with Int x, Int y -> Int (x + y) | x, y -> Add (x, y)
@@ -65,10 +60,17 @@ let ( - ) x y =
   match (x, y) with Int x, Int y -> Int (x - y) | x, y -> Sub (x, y)
 
 let abs = function Int x -> Int (abs x) | x -> Abs x
-let var s = Var s
-let int x = Int x
+
+let ( <= ) x y =
+  match (x, y) with
+  | Int x, Int y -> if x <= y then True else False
+  | x, y -> Le (x, y)
 
 let equal x y =
   match (x, y) with
   | Int x, Int y -> if x = y then True else False
   | x, y -> Equal (x, y)
+
+let ( && ) x y = all [ x; y ]
+let ( || ) x y = any [ x; y ]
+let not = function True -> False | False -> True | e -> Not e
