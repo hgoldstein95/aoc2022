@@ -1,6 +1,7 @@
 open! Core
 open! Stdio
 module G = Quickcheck.Generator
+module T = Domainslib.Task
 
 let example =
   "Valve AA has flow rate=0; tunnels lead to valves DD, II, BB\n\
@@ -119,71 +120,65 @@ module Network = struct
       int =
     let module CacheKey = struct
       module T = struct
-        type t = string list * int list * Set.M(Valve).t
+        type t = (string * (string * int)) list * Set.M(Valve).t
         [@@deriving sexp, equal, compare, hash]
       end
 
       include T
       include Hashable.Make (T)
     end in
-    let cache = Hashtbl.create (module CacheKey) in
-
+    let pool = T.setup_pool ~num_domains:8 () in
+    (* let sort_entities es =
+         es |> List.unzip |> fun (ns, rs) ->
+         List.zip_exn ns (List.sort rs ~compare:[%compare: string * int])
+       in
+       let cache = Hashtbl.create (module CacheKey) in *)
     let useful_valves =
       network.valve_map |> Map.data |> List.filter ~f:(fun v -> v.rate > 0)
     in
-    let rec loop rooms steps_lefts open_valves =
-      (* match Hashtbl.find cache (rooms, steps_lefts, open_valves) with
+    let rec loop entities open_valves =
+      (* match Hashtbl.find cache (sort_entities entities, open_valves) with
          | Some v -> v
          | None -> *)
+      let worlds =
+        let open List.Let_syntax in
+        let%bind entity_name, (room, steps_left) = entities in
+        let%bind new_valve =
+          List.filter useful_valves ~f:(fun v -> not (Set.mem open_valves v))
+        in
+        let distance =
+          Hashtbl.find_exn network.distance_map (room, new_valve.name) + 1
+        in
+        if distance > steps_left then []
+        else
+          let score = new_valve.rate * (steps_left - distance) in
+          let entities' =
+            List.Assoc.add ~equal:String.equal entities entity_name
+              (new_valve.name, steps_left - distance)
+          in
+          let open_valves' = Set.add open_valves new_valve in
+          List.return
+            (T.async pool (fun _ -> score + loop entities' open_valves'))
+      in
       let result =
-        useful_valves
-        |> List.filter ~f:(fun valve -> not (Set.mem open_valves valve))
-        |> (fun x ->
-             match parallelism with
-             | `One -> List.map x ~f:(fun l -> [ l ])
-             | `Two ->
-                 List.cartesian_product x x
-                 |> List.filter_map ~f:(fun (a, b) ->
-                        if [%equal: Valve.t] a b then None else Some [ a; b ]))
-        |> List.map ~f:(fun new_valves ->
-               let rates, steps_lefts', new_valves' =
-                 List.zip_exn (List.zip_exn rooms new_valves) steps_lefts
-                 |> List.map ~f:(fun ((room, new_valve), steps_left) ->
-                        let distance =
-                          Hashtbl.find_exn network.distance_map
-                            (room, new_valve.name)
-                          + 1
-                        in
-                        if distance > steps_left then (0, None, None)
-                        else
-                          ( new_valve.rate * (steps_left - distance),
-                            Some (steps_left - distance),
-                            Some new_valve ))
-                 |> List.unzip3
-               in
-               if List.for_all steps_lefts' ~f:Option.is_none then 0
-               else
-                 List.sum (module Int) rates ~f:Fn.id
-                 + loop
-                     (List.zip_exn rooms new_valves'
-                     |> List.map ~f:(fun (room, v) ->
-                            match v with Some v -> v.name | None -> room))
-                     (List.map ~f:(Option.value ~default:0) steps_lefts')
-                     (Set.union open_valves
-                        (Set.of_list
-                           (module Valve)
-                           (List.filter_opt new_valves'))))
+        worlds
+        |> List.map ~f:(T.await pool)
         |> List.max_elt ~compare:Int.compare
         |> Option.value ~default:0
       in
       (* Hashtbl.add_exn cache
-         ~key:(rooms, steps_lefts, open_valves)
+         ~key:(sort_entities entities, open_valves)
          ~data:result; *)
       result
     in
-    match parallelism with
-    | `One -> loop [ "AA" ] [ steps ] (Set.empty (module Valve))
-    | `Two -> loop [ "AA"; "AA" ] [ steps; steps ] (Set.empty (module Valve))
+    let entities =
+      match parallelism with
+      | `One -> [ ("me", ("AA", steps)) ]
+      | `Two -> [ ("me", ("AA", steps)); ("elephant", ("AA", steps)) ]
+    in
+    let res = T.run pool (fun _ -> loop entities (Set.empty (module Valve))) in
+    T.teardown_pool pool;
+    res
 end
 
 let part1 input =
