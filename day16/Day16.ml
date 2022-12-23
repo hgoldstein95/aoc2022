@@ -115,22 +115,11 @@ module Network = struct
     let distance_map = floyd_warshall valve_map in
     { valve_map; distance_map }
 
-  let potential_values (network : t) (room : string) (steps_left : int)
-      (open_valves : Set.M(Valve).t) : (Valve.t * int * int) list =
-    network.valve_map |> Map.data
-    |> List.filter_map ~f:(fun other_valve ->
-           let dist =
-             Hashtbl.find_exn network.distance_map (room, other_valve.name) + 1
-           in
-           if steps_left < dist then None
-           else if Set.mem open_valves other_valve then None
-           else if other_valve.rate <= 0 then None
-           else Some (other_valve, other_valve.rate * (steps_left - dist), dist))
-
-  let simulate (network : t) : int =
+  let simulate (network : t) ~(steps : int) ~(parallelism : [ `One | `Two ]) :
+      int =
     let module CacheKey = struct
       module T = struct
-        type t = string * int * Set.M(Valve).t
+        type t = string list * int list * Set.M(Valve).t
         [@@deriving sexp, equal, compare, hash]
       end
 
@@ -138,43 +127,81 @@ module Network = struct
       include Hashable.Make (T)
     end in
     let cache = Hashtbl.create (module CacheKey) in
-    let rec loop room steps_left open_valves =
-      match Hashtbl.find cache (room, steps_left, open_valves) with
-      | Some v -> v
-      | None ->
-          let result =
-            if steps_left <= 0 then 0
-            else
-              match potential_values network room steps_left open_valves with
-              | [] -> 0
-              | v ->
-                  v
-                  |> List.map ~f:(fun (new_valve, value, distance) ->
-                         value
-                         + loop new_valve.name (steps_left - distance)
-                             (Set.add open_valves new_valve))
-                  |> List.max_elt ~compare:Int.compare
-                  |> Option.value_exn
-          in
-          let _ =
-            Hashtbl.add cache ~key:(room, steps_left, open_valves) ~data:result
-          in
-          result
+
+    let useful_valves =
+      network.valve_map |> Map.data |> List.filter ~f:(fun v -> v.rate > 0)
     in
-    loop "AA" 30 (Set.empty (module Valve))
+    let rec loop rooms steps_lefts open_valves =
+      (* match Hashtbl.find cache (rooms, steps_lefts, open_valves) with
+         | Some v -> v
+         | None -> *)
+      let result =
+        useful_valves
+        |> List.filter ~f:(fun valve -> not (Set.mem open_valves valve))
+        |> (fun x ->
+             match parallelism with
+             | `One -> List.map x ~f:(fun l -> [ l ])
+             | `Two ->
+                 List.cartesian_product x x
+                 |> List.filter_map ~f:(fun (a, b) ->
+                        if [%equal: Valve.t] a b then None else Some [ a; b ]))
+        |> List.map ~f:(fun new_valves ->
+               let rates, steps_lefts', new_valves' =
+                 List.zip_exn (List.zip_exn rooms new_valves) steps_lefts
+                 |> List.map ~f:(fun ((room, new_valve), steps_left) ->
+                        let distance =
+                          Hashtbl.find_exn network.distance_map
+                            (room, new_valve.name)
+                          + 1
+                        in
+                        if distance > steps_left then (0, None, None)
+                        else
+                          ( new_valve.rate * (steps_left - distance),
+                            Some (steps_left - distance),
+                            Some new_valve ))
+                 |> List.unzip3
+               in
+               if List.for_all steps_lefts' ~f:Option.is_none then 0
+               else
+                 List.sum (module Int) rates ~f:Fn.id
+                 + loop
+                     (List.zip_exn rooms new_valves'
+                     |> List.map ~f:(fun (room, v) ->
+                            match v with Some v -> v.name | None -> room))
+                     (List.map ~f:(Option.value ~default:0) steps_lefts')
+                     (Set.union open_valves
+                        (Set.of_list
+                           (module Valve)
+                           (List.filter_opt new_valves'))))
+        |> List.max_elt ~compare:Int.compare
+        |> Option.value ~default:0
+      in
+      (* Hashtbl.add_exn cache
+         ~key:(rooms, steps_lefts, open_valves)
+         ~data:result; *)
+      result
+    in
+    match parallelism with
+    | `One -> loop [ "AA" ] [ steps ] (Set.empty (module Valve))
+    | `Two -> loop [ "AA"; "AA" ] [ steps; steps ] (Set.empty (module Valve))
 end
 
 let part1 input =
-  input |> Network.of_string |> Network.simulate |> Int.to_string
+  input |> Network.of_string
+  |> Network.simulate ~steps:30 ~parallelism:`One
+  |> Int.to_string
 
 let%expect_test "part1" =
   let result = part1 example in
   print_endline result;
   [%expect {| 1651 |}]
 
-let part2 _ = ""
+let part2 input =
+  input |> Network.of_string
+  |> Network.simulate ~steps:26 ~parallelism:`Two
+  |> Int.to_string
 
 let%expect_test "part2" =
   let result = part2 example in
   print_endline result;
-  [%expect {|  |}]
+  [%expect {| 1707 |}]
