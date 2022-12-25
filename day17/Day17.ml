@@ -190,18 +190,6 @@ module Tetris = struct
     then None
     else Some new_rock
 
-  let last_rock_made_tetris state =
-    let last_rock = List.hd_exn state.rocks in
-    let ys =
-      List.range (Rock.y_min last_rock) (Rock.y_max last_rock) ~start:`inclusive
-        ~stop:`inclusive
-    in
-    List.exists ys ~f:(fun y ->
-        List.for_all (List.range 0 6 ~start:`inclusive ~stop:`inclusive)
-          ~f:(fun x ->
-            List.exists state.rocks ~f:(fun rock ->
-                List.mem (Rock.points rock) { x; y } ~equal:Point.equal)))
-
   let drop_rock state =
     let rock = ref (next_rock state) in
     let stopped = ref false in
