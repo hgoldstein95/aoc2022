@@ -1,0 +1,10 @@
+(env
+ (dev
+  (flags
+   (:standard -warn-error -A))))
+(library
+  (name day18)
+  (libraries core stdio)
+  (preprocess (pps ppx_jane))
+  (inline_tests))
+
