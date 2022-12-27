@@ -94,7 +94,14 @@ end = struct
   include Comparable.Make (T)
 end
 
-module Blueprint = struct
+module Blueprint : sig
+  type t [@@deriving sexp, equal, compare, hash]
+
+  val of_string : string -> t
+  val lookup_cost : t -> Resource.t -> ResourceSet.t
+  val max_cost : t -> Resource.t -> int
+  val id : t -> int
+end = struct
   module T = struct
     type t = { id : int; costs : ResourceSet.t Map.M(Resource).t }
     [@@deriving sexp, equal, compare, hash]
@@ -134,6 +141,15 @@ module Blueprint = struct
     match Angstrom.parse_string ~consume:All angstrom s with
     | Ok blueprint -> blueprint
     | Error msg -> failwith msg
+
+  let lookup_cost t r = Map.find_exn t.costs r
+
+  let max_cost t r =
+    List.map (Map.data t.costs) ~f:(fun costs -> ResourceSet.find costs r)
+    |> List.max_elt ~compare:Int.compare
+    |> Option.value ~default:0
+
+  let id t = t.id
 
   include Comparable.Make (T)
   include Hashable.Make (T)
@@ -196,7 +212,7 @@ module Simulation = struct
 
   let steps_to_build state ~target_robot =
     let costs =
-      Map.find_exn state.blueprint.costs target_robot
+      Blueprint.lookup_cost state.blueprint target_robot
       |> ResourceSet.get_cost_list
     in
     let potential_steps =
@@ -220,46 +236,57 @@ module Simulation = struct
         `Steps steps
 
   let build_robot state ~target_robot =
-    let costs = Map.find_exn state.blueprint.costs target_robot in
+    let costs = Blueprint.lookup_cost state.blueprint target_robot in
     {
       state with
       resources = ResourceSet.sub state.resources costs |> Option.value_exn;
       robots = ResourceSet.(add state.robots (uniform target_robot 1));
     }
 
+  let best_possible state ~total_steps =
+    let steps = total_steps - state.step in
+    let geode_bots = ResourceSet.find state.robots Geode in
+    let geodes = ResourceSet.find state.resources Geode in
+    geodes + (steps * (steps + 1) / 2) + (steps * geode_bots)
+
   let maximize_blueprint blueprint ~total_steps =
+    let best_final = ref 0 in
     let loop self state =
-      let targets =
-        Resource.[ Geode; Obsidian; Clay; Ore ]
-        |> List.filter_map ~f:(fun target_robot ->
-               match steps_to_build state ~target_robot with
-               | `Not_enough_robots -> None
-               | `Steps steps when state.step + steps + 1 > total_steps -> None
-               | `Steps steps -> Some (target_robot, steps))
-      in
-      match targets with
-      | [] ->
-          let final_state =
-            accumulate_for state ~n:(total_steps - state.step)
-          in
-          ResourceSet.find final_state.resources Geode
-      | _ ->
-          List.map targets ~f:(fun (target_robot, steps) ->
-              state
-              |> accumulate_for ~n:(steps + 1)
-              |> build_robot ~target_robot |> self)
-          |> List.max_elt ~compare:Int.compare
-          |> Option.value_exn
+      if best_possible state ~total_steps < !best_final then 0
+      else
+        let targets =
+          Resource.[ Geode; Obsidian; Clay; Ore ]
+          |> List.filter_map ~f:(fun target_robot ->
+                 let at_limit_for_target =
+                   (not ([%equal: Resource.t] target_robot Geode))
+                   && Blueprint.max_cost blueprint target_robot
+                      <= ResourceSet.find state.robots target_robot
+                 in
+                 if at_limit_for_target then None
+                 else
+                   match steps_to_build state ~target_robot with
+                   | `Not_enough_robots -> None
+                   | `Steps steps when state.step + steps + 1 > total_steps ->
+                       None
+                   | `Steps steps -> Some (target_robot, steps))
+        in
+        match targets with
+        | [] ->
+            let final_state =
+              accumulate_for state ~n:(total_steps - state.step)
+            in
+            let final = ResourceSet.find final_state.resources Geode in
+            if final > !best_final then best_final := final;
+            final
+        | _ ->
+            List.map targets ~f:(fun (target_robot, steps) ->
+                state
+                |> accumulate_for ~n:(steps + 1)
+                |> build_robot ~target_robot |> self)
+            |> List.max_elt ~compare:Int.compare
+            |> Option.value ~default:0
     in
-    (* let cache = Hashtbl.create (module State_key) in *)
-    let rec fix f x =
-      (* match Hashtbl.find cache x with
-         | Some y -> y
-         | None -> *)
-      let y = f (fix f) x in
-      (* Hashtbl.set cache ~key:x ~data:y; *)
-      y
-    in
+    let rec fix f x = f (fix f) x in
     fix loop (init blueprint)
 end
 
@@ -268,7 +295,8 @@ let part1 input =
   |> List.map ~f:Blueprint.of_string
   |> List.sum
        (module Int)
-       ~f:(fun b -> Simulation.maximize_blueprint b ~total_steps:24 * b.id)
+       ~f:(fun b ->
+         Simulation.maximize_blueprint b ~total_steps:24 * Blueprint.id b)
   |> Int.to_string
 
 let%expect_test "part1" =
