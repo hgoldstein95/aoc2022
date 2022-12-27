@@ -17,38 +17,81 @@ module Resource = struct
 
   include T
   include Comparable.Make (T)
-  include Hashable.Make (T)
 end
 
-module ResourceSet = struct
+module ResourceSet : sig
+  type t [@@deriving sexp, equal, compare, hash]
+
+  val empty : t
+  val uniform : Resource.t -> int -> t
+  val add : t -> t -> t
+  val sub : t -> t -> t option
+  val scale : t -> int -> t
+  val get_cost_list : t -> (Resource.t * int) list
+  val find : t -> Resource.t -> int
+
+  include Comparable.S with type t := t
+end = struct
   module T = struct
-    type t = int Map.M(Resource).t [@@deriving sexp, equal, compare, hash]
+    type t = { ore : int; clay : int; obsidian : int; geode : int }
+    [@@deriving sexp, equal, compare, hash]
   end
 
   include T
 
-  let empty = Map.empty (module Resource)
-  let uniform r n = Map.of_alist_exn (module Resource) [ (r, n) ]
+  let empty = { ore = 0; clay = 0; obsidian = 0; geode = 0 }
+
+  let uniform r n =
+    assert (n >= 0);
+    match r with
+    | Resource.Ore -> { empty with ore = n }
+    | Resource.Clay -> { empty with clay = n }
+    | Resource.Obsidian -> { empty with obsidian = n }
+    | Resource.Geode -> { empty with geode = n }
 
   let add (a : t) (b : t) : t =
-    Map.merge a b ~f:(fun ~key:_ -> function
-      | `Both (a, b) -> Some (a + b) | `Left a | `Right a -> Some a)
+    {
+      ore = a.ore + b.ore;
+      clay = a.clay + b.clay;
+      obsidian = a.obsidian + b.obsidian;
+      geode = a.geode + b.geode;
+    }
 
   let sub (a : t) (b : t) : t option =
-    List.concat_map
-      Resource.[ Ore; Clay; Obsidian; Geode ]
-      ~f:(fun resource ->
-        match (Map.find a resource, Map.find b resource) with
-        | Some stock, Some cost ->
-            [ (if cost <= stock then Some (resource, stock - cost) else None) ]
-        | Some stock, None -> [ Some (resource, stock) ]
-        | None, Some _ -> [ None ]
-        | None, None -> [])
-    |> Option.all
-    |> Option.map ~f:(Map.of_alist_exn (module Resource))
+    if
+      a.ore < b.ore || a.clay < b.clay || a.obsidian < b.obsidian
+      || a.geode < b.geode
+    then None
+    else
+      Some
+        {
+          ore = a.ore - b.ore;
+          clay = a.clay - b.clay;
+          obsidian = a.obsidian - b.obsidian;
+          geode = a.geode - b.geode;
+        }
+
+  let scale a n =
+    assert (n >= 0);
+    {
+      ore = a.ore * n;
+      clay = a.clay * n;
+      obsidian = a.obsidian * n;
+      geode = a.geode * n;
+    }
+
+  let get_cost_list t =
+    Resource.
+      [ (Ore, t.ore); (Clay, t.clay); (Obsidian, t.obsidian); (Geode, t.geode) ]
+    |> List.filter ~f:(fun (_, n) -> n > 0)
+
+  let find t = function
+    | Resource.Ore -> t.ore
+    | Resource.Clay -> t.clay
+    | Resource.Obsidian -> t.obsidian
+    | Resource.Geode -> t.geode
 
   include Comparable.Make (T)
-  include Hashable.Make (T)
 end
 
 module Blueprint = struct
@@ -105,18 +148,23 @@ let%expect_test "Blueprint.to_string" =
     {|
     (((id 1)
       (costs
-       ((Ore ((Ore 4))) (Clay ((Ore 2))) (Obsidian ((Ore 3) (Clay 14)))
-        (Geode ((Ore 2) (Obsidian 7))))))
+       ((Ore ((ore 4) (clay 0) (obsidian 0) (geode 0)))
+        (Clay ((ore 2) (clay 0) (obsidian 0) (geode 0)))
+        (Obsidian ((ore 3) (clay 14) (obsidian 0) (geode 0)))
+        (Geode ((ore 2) (clay 0) (obsidian 7) (geode 0))))))
      ((id 2)
       (costs
-       ((Ore ((Ore 2))) (Clay ((Ore 3))) (Obsidian ((Ore 3) (Clay 8)))
-        (Geode ((Ore 3) (Obsidian 12))))))) |}]
+       ((Ore ((ore 2) (clay 0) (obsidian 0) (geode 0)))
+        (Clay ((ore 3) (clay 0) (obsidian 0) (geode 0)))
+        (Obsidian ((ore 3) (clay 8) (obsidian 0) (geode 0)))
+        (Geode ((ore 3) (clay 0) (obsidian 12) (geode 0))))))) |}]
 
 module Simulation = struct
   type state = {
     blueprint : Blueprint.t;
     robots : ResourceSet.t;
     resources : ResourceSet.t;
+    step : int;
   }
   [@@deriving sexp, equal, compare, hash]
 
@@ -135,62 +183,107 @@ module Simulation = struct
       blueprint;
       robots = ResourceSet.uniform Ore 1;
       resources = ResourceSet.empty;
+      step = 0;
     }
 
-  let execute_purchases blueprint purchases =
-    let try_purchase state robot =
-      let cost = Map.find_exn state.blueprint.costs robot in
-      ResourceSet.sub state.resources cost
-      |> Option.map ~f:(fun resources ->
-             let robots =
-               ResourceSet.add state.robots (ResourceSet.uniform robot 1)
-             in
-             { state with robots; resources })
+  let accumulate_for state ~n =
+    assert (n >= 0);
+    {
+      state with
+      step = state.step + n;
+      resources = ResourceSet.(add state.resources (scale state.robots n));
+    }
+
+  let steps_to_build state ~target_robot =
+    let costs =
+      Map.find_exn state.blueprint.costs target_robot
+      |> ResourceSet.get_cost_list
     in
-    let rec loop state step ps =
-      print_s
-        [%message
-          (state.resources : ResourceSet.t) (state.robots : ResourceSet.t)];
-      if step >= 24 then state
-      else
-        let new_resources = state.robots in
-        let state', ps' =
-          match ps with
-          | [] -> (state, [])
-          | robot :: ps -> (
-              match try_purchase state robot with
-              | None -> (state, robot :: ps)
-              | Some state' -> (state', ps))
+    let potential_steps =
+      List.map costs ~f:(fun (resource, cost) ->
+          let stock = ResourceSet.find state.resources resource in
+          let n_robots = ResourceSet.find state.robots resource in
+          if stock >= cost then Some 0
+          else if n_robots = 0 then None
+          else Some ((cost - stock + n_robots - 1) / n_robots))
+      |> Option.all
+    in
+    match potential_steps with
+    | None -> `Not_enough_robots
+    | Some potential_steps ->
+        let steps =
+          potential_steps
+          |> List.max_elt ~compare:Int.compare
+          |> Option.value_exn
         in
-        loop
-          {
-            state' with
-            resources = ResourceSet.add state'.resources new_resources;
-          }
-          (step + 1) ps'
+        assert (steps >= 0);
+        `Steps steps
+
+  let build_robot state ~target_robot =
+    let costs = Map.find_exn state.blueprint.costs target_robot in
+    {
+      state with
+      resources = ResourceSet.sub state.resources costs |> Option.value_exn;
+      robots = ResourceSet.(add state.robots (uniform target_robot 1));
+    }
+
+  let maximize_blueprint blueprint ~total_steps =
+    let loop self state =
+      let targets =
+        Resource.[ Geode; Obsidian; Clay; Ore ]
+        |> List.filter_map ~f:(fun target_robot ->
+               match steps_to_build state ~target_robot with
+               | `Not_enough_robots -> None
+               | `Steps steps when state.step + steps + 1 > total_steps -> None
+               | `Steps steps -> Some (target_robot, steps))
+      in
+      match targets with
+      | [] ->
+          let final_state =
+            accumulate_for state ~n:(total_steps - state.step)
+          in
+          ResourceSet.find final_state.resources Geode
+      | _ ->
+          List.map targets ~f:(fun (target_robot, steps) ->
+              state
+              |> accumulate_for ~n:(steps + 1)
+              |> build_robot ~target_robot |> self)
+          |> List.max_elt ~compare:Int.compare
+          |> Option.value_exn
     in
-    let state = loop (init blueprint) 0 purchases in
-    Map.find state.resources Geode |> Option.value ~default:0
+    (* let cache = Hashtbl.create (module State_key) in *)
+    let rec fix f x =
+      (* match Hashtbl.find cache x with
+         | Some y -> y
+         | None -> *)
+      let y = f (fix f) x in
+      (* Hashtbl.set cache ~key:x ~data:y; *)
+      y
+    in
+    fix loop (init blueprint)
 end
 
 let part1 input =
   input |> String.split_lines
   |> List.map ~f:Blueprint.of_string
-  |> List.map ~f:(fun bp ->
-         Simulation.execute_purchases bp
-           [ Clay; Clay; Clay; Obsidian; Clay; Obsidian; Geode; Geode ])
-  |> [%sexp_of: int list] |> Sexp.to_string_hum
-(* |> List.sum (module Int) ~f:(fun b -> Simulation.maximize_blueprint b * b.id)
-   |> Int.to_string *)
+  |> List.sum
+       (module Int)
+       ~f:(fun b -> Simulation.maximize_blueprint b ~total_steps:24 * b.id)
+  |> Int.to_string
 
 let%expect_test "part1" =
   let result = part1 example in
   print_endline result;
-  [%expect {|  |}]
+  [%expect {| 33 |}]
 
-let part2 _ = ""
+let part2 input =
+  input |> String.split_lines |> Fn.flip List.take 3
+  |> List.map ~f:Blueprint.of_string
+  |> List.map ~f:(fun b -> Simulation.maximize_blueprint b ~total_steps:32)
+  |> List.reduce_exn ~f:(fun x y -> x * y)
+  |> Int.to_string
 
 let%expect_test "part2" =
   let result = part2 example in
   print_endline result;
-  [%expect {|  |}]
+  [%expect {| 3472 |}]
