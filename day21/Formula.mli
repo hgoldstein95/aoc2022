@@ -1,7 +1,7 @@
 type _ t
 
-val compile : Z3.context -> bool t -> Z3.Expr.expr
-val bvar : string -> bool t
+val compile : bool t -> Z3.context -> Z3.Expr.expr
+val eval : 'a t -> (string -> int option) -> 'a option
 val var : string -> int t
 val int : int -> int t
 val ( + ) : int t -> int t -> int t
