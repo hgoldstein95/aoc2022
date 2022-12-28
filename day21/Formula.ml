@@ -17,6 +17,14 @@ type _ t =
   | Not : bool t -> bool t
   | Ite : bool t * 'a t * 'a t -> 'a t
 
+let arith_args = function
+  | Add (e1, e2) -> [ e1; e2 ]
+  | Sub (e1, e2) -> [ e1; e2 ]
+  | Mul (e1, e2) -> [ e1; e2 ]
+  | Div (e1, e2) -> [ e1; e2 ]
+  | Abs e -> [ e ]
+  | _ -> []
+
 let eval (expr : 'a t) (ctx : string -> int option) : 'a option =
   let open Option.Let_syntax in
   let rec loop : type a. a t -> a option = function

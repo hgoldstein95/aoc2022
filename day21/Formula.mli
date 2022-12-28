@@ -1,5 +1,6 @@
 type _ t
 
+val arith_args : int t -> int t list
 val compile : bool t -> Z3.context -> Z3.Expr.expr
 val eval : 'a t -> (string -> int option) -> 'a option
 val var : string -> int t
