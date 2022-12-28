@@ -7,6 +7,7 @@ type _ t =
   | Add : int t * int t -> int t
   | Sub : int t * int t -> int t
   | Mul : int t * int t -> int t
+  | Div : int t * int t -> int t
   | Abs : int t -> int t
   | Le : int t * int t -> bool t
   | Equal : int t * int t -> bool t
@@ -34,6 +35,7 @@ let compile (ctx : Z3.context) (expr : bool t) : Z3.Expr.expr =
     | Add (x, y) -> Arithmetic.mk_add ctx [ loop x; loop y ]
     | Sub (x, y) -> Arithmetic.mk_sub ctx [ loop x; loop y ]
     | Mul (x, y) -> Arithmetic.mk_mul ctx [ loop x; loop y ]
+    | Div (x, y) -> Arithmetic.mk_div ctx (loop x) (loop y)
     | Abs x ->
         let x = loop x in
         Boolean.mk_ite ctx
@@ -69,6 +71,9 @@ let ( - ) x y =
 let ( * ) x y =
   match (x, y) with Int x, Int y -> Int (x * y) | x, y -> Mul (x, y)
 
+let ( / ) x y =
+  match (x, y) with Int x, Int y -> Int (x / y) | x, y -> Div (x, y)
+
 let abs = function Int x -> Int (abs x) | x -> Abs x
 
 let ( <= ) x y =
@@ -90,3 +95,16 @@ let ite c t e =
   | True, t, _ -> t
   | False, _, e -> e
   | c, t, e -> Ite (c, t, e)
+
+let z3_int_from_model ctx model s =
+  let open Z3 in
+  Model.get_const_interp_e model (Arithmetic.Integer.mk_const_s ctx s)
+  |> Option.value_exn |> Expr.to_string |> Int.of_string
+
+let solve_for_variable formula ~var =
+  let open Z3 in
+  let ctx = mk_context [] in
+  let solver = Solver.mk_solver ctx None in
+  let _ = Solver.check solver [ compile ctx formula ] in
+  let model = Solver.get_model solver |> Option.value_exn in
+  z3_int_from_model ctx model var

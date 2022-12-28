@@ -1,0 +1,11 @@
+(env
+ (dev
+  (flags
+   (:standard -warn-error -A))))
+
+(library
+ (name day21)
+ (libraries core stdio angstrom z3)
+ (preprocess
+  (pps ppx_jane))
+ (inline_tests))

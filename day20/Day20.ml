@@ -19,11 +19,6 @@ module SwapRing = struct
 
   let length r = Array.length r.index
 
-  let debug (r : t) : string =
-    let xs = Doubly_linked.to_list r.ring in
-    let s = xs |> List.map ~f:Int.to_string |> String.concat ~sep:", " in
-    s ^ ", " ^ s ^ ", " ^ s
-
   let of_list (xs : int list) : t =
     let ring = Doubly_linked.of_list xs in
     let curr = ref (Doubly_linked.first_elt ring) in
