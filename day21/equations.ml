@@ -24,3 +24,8 @@ let of_alist (l : (string * int Formula.t) list) : t =
 let to_alist (m : t) : (string * int Formula.t) list = Hashtbl.to_alist m
 let remove (m : t) ~(var : string) : unit = Hashtbl.remove m var
 let variables (m : t) : string list = Hashtbl.keys m
+
+let to_formula (m : t) : bool Formula.t =
+  to_alist m
+  |> List.map ~f:(fun (name, expr) -> Formula.(equal (var name) expr))
+  |> Formula.all

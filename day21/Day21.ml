@@ -70,12 +70,7 @@ module Monkeys = struct
         let _ = Equations.get monkeys ~var:name in
         ());
 
-    let map_eqs =
-      Equations.to_alist monkeys
-      |> List.map ~f:(fun (name, expr) -> equal (var name) expr)
-      |> all
-    in
-    (map_eqs && root_eq) |> solve_for_variable ~var:"humn"
+    (Equations.to_formula monkeys && root_eq) |> solve_for_variable ~var:"humn"
 end
 
 let part1 input =
