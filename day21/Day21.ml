@@ -56,10 +56,9 @@ module Monkeys = struct
     | Error msg -> raise (Parse_error (`Unknown msg))
 
   let correct_and_solve (monkeys : t) : int =
-    let open Formula in
     let root_eq =
-      match arith_args (Equations.find_exn monkeys ~var:"root") with
-      | [ e1; e2 ] -> equal e1 e2
+      match Formula.arith_args (Equations.find_exn monkeys ~var:"root") with
+      | [ e1; e2 ] -> Formula.equal e1 e2
       | _ -> raise Invalid_root
     in
 
@@ -70,7 +69,8 @@ module Monkeys = struct
         let _ = Equations.get monkeys ~var:name in
         ());
 
-    (Equations.to_formula monkeys && root_eq) |> solve_for_variable ~var:"humn"
+    Formula.(Equations.to_formula monkeys && root_eq)
+    |> Formula.solve_for_variable ~var:"humn"
 end
 
 let part1 input =
