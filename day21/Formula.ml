@@ -16,6 +16,7 @@ type _ t =
   | Or : bool t list -> bool t
   | Not : bool t -> bool t
   | Ite : bool t * 'a t * 'a t -> 'a t
+[@@deriving sexp_of]
 
 let arith_args = function
   | Add (e1, e2) -> [ e1; e2 ]

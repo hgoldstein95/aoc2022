@@ -1,4 +1,4 @@
-type _ t
+type _ t [@@deriving sexp_of]
 
 val arith_args : int t -> int t list
 val compile : bool t -> Z3.context -> Z3.Expr.expr
