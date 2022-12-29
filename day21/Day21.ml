@@ -21,9 +21,9 @@ let example =
 module Monkeys = struct
   exception Monkey_not_found
   exception Invalid_root
-  exception Parse_error
+  exception Parse_error of [ `Invalid_op of char | `Unknown of string ]
 
-  type t = [ `Cached of int | `Expr of int Formula.t ] Hashtbl.M(String).t
+  type t = int Formula.t Hashtbl.M(String).t
 
   let of_string (s : string) : t =
     let open Angstrom in
@@ -31,63 +31,66 @@ module Monkeys = struct
     let name = take_while1 Char.is_alpha in
     let op = char '+' <|> char '-' <|> char '*' <|> char '/' in
     let binop =
-      name >>= fun l ->
-      char ' ' *> op >>= fun op ->
-      char ' ' *> name >>| fun r ->
+      let open Angstrom.Let_syntax in
+      let%bind l = name in
+      let%bind op = char ' ' *> op <* char ' ' in
+      let%map r = name in
       match op with
       | '+' -> var l + var r
       | '-' -> var l - var r
       | '*' -> var l * var r
       | '/' -> var l / var r
-      | _ -> raise Parse_error
+      | _ -> raise (Parse_error (`Invalid_op op))
     in
     let const = take_while1 Char.is_digit >>| fun d -> int (Int.of_string d) in
     let expr = binop <|> const in
     let key_value =
       name >>= fun n ->
-      string ": " *> expr >>| fun e -> (n, `Expr e)
+      string ": " *> expr >>| fun e -> (n, e)
     in
     let parse_line line =
       match Angstrom.parse_string ~consume:All key_value line with
       | Ok blueprint -> blueprint
-      | Error msg -> failwith msg
+      | Error msg -> raise (Parse_error (`Unknown msg))
     in
     s |> String.split_lines |> List.map ~f:parse_line
     |> Hashtbl.of_alist_exn (module String)
 
-  let rec get (monkeys : t) ~(name : string) =
+  let find (monkeys : t) ~(name : string) : int Formula.t option =
+    Hashtbl.find monkeys name
+
+  let find_exn (monkeys : t) ~(name : string) : int Formula.t =
     match Hashtbl.find monkeys name with
-    | None -> None
-    | Some (`Cached v) -> Some v
-    | Some (`Expr e) ->
-        let open Option.Let_syntax in
-        let%map v = Formula.eval e (fun name -> get monkeys ~name) in
-        Hashtbl.set monkeys ~key:name ~data:(`Cached v);
-        v
+    | None -> raise Monkey_not_found
+    | Some f -> f
+
+  let rec get (monkeys : t) ~(name : string) : int option =
+    let open Option.Let_syntax in
+    let%bind e = find monkeys ~name in
+    let%map v = Formula.eval e (fun name -> get monkeys ~name) in
+    (* NOTE: Cache the computed value by replacing the formula with a
+       constant. *)
+    Hashtbl.set monkeys ~key:name ~data:(Formula.int v);
+    v
 
   let correct_and_solve (monkeys : t) : int =
     let open Formula in
     let root_eq =
-      match Hashtbl.find_exn monkeys "root" with
-      | `Expr v -> (
-          match arith_args v with
-          | [ e1; e2 ] -> equal e1 e2
-          | _ -> raise Invalid_root)
+      match arith_args (find_exn monkeys ~name:"root") with
+      | [ e1; e2 ] -> equal e1 e2
       | _ -> raise Invalid_root
     in
 
     Hashtbl.remove monkeys "root";
     Hashtbl.remove monkeys "humn";
-    (* NOTE: We do this so we can pre-evaluate a bunch of values. *)
+    (* NOTE: Try to pre-cache some results. *)
     List.iter (Hashtbl.keys monkeys) ~f:(fun name ->
         let _ = get monkeys ~name in
         ());
 
     let map_eqs =
       Hashtbl.to_alist monkeys
-      |> List.map ~f:(fun (name, expr) ->
-             equal (var name)
-               (match expr with `Cached v -> int v | `Expr e -> e))
+      |> List.map ~f:(fun (name, expr) -> equal (var name) expr)
       |> all
     in
     (map_eqs && root_eq) |> solve_for_variable ~var:"humn"
