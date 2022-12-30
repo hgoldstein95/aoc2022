@@ -178,3 +178,12 @@
  (preprocess
   (pps ppx_jane)))
 
+
+(executable
+ (name day22_exe)
+ (public_name day22_exe)
+ (libraries core stdio day22)
+ (modules day22_exe)
+ (preprocess
+  (pps ppx_jane)))
+
