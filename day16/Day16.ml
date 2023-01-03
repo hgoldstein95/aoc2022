@@ -60,48 +60,40 @@ module Valve = struct
 end
 
 module Network = struct
-  module RoomPair = struct
-    module T = struct
-      type t = string * string [@@deriving sexp, equal, compare, hash]
-    end
-
-    include T
-    include Comparable.Make (T)
-    include Hashable.Make (T)
-  end
-
   type t = {
     valve_map : Valve.t Map.M(String).t;
-    distance_map : int Hashtbl.M(RoomPair).t;
+    distance_map : int Hashtbl.M(Tuple.Hashable_t(String)(String)).t;
   }
-  [@@deriving sexp, equal]
 
-  let floyd_warshall (valve_map : Valve.t Map.M(String).t) :
-      int Hashtbl.M(RoomPair).t =
-    let rooms = Map.keys valve_map in
-    let distance_map : int Hashtbl.M(RoomPair).t =
-      Hashtbl.create (module RoomPair)
+  let floyd_warshall (edges : (string * string list) list) (nodes : string list)
+      : int Hashtbl.M(Tuple.Hashable_t(String)(String)).t =
+    let distance_map =
+      Hashtbl.create (module Tuple.Hashable_t (String) (String))
     in
-    List.iter (Map.data valve_map) ~f:(fun valve ->
-        Hashtbl.set distance_map ~key:(valve.name, valve.name) ~data:0;
-        List.iter valve.successors ~f:(fun successor ->
-            Hashtbl.set distance_map ~key:(valve.name, successor) ~data:1));
-    List.iter rooms ~f:(fun k ->
-        List.iter rooms ~f:(fun i ->
-            List.iter rooms ~f:(fun j ->
+
+    List.iter edges ~f:(fun (node, successors) ->
+        List.iter successors ~f:(fun successor ->
+            Hashtbl.set distance_map ~key:(node, successor) ~data:1));
+
+    List.iter nodes ~f:(fun node ->
+        Hashtbl.set distance_map ~key:(node, node) ~data:0);
+
+    List.iter nodes ~f:(fun k ->
+        List.iter nodes ~f:(fun i ->
+            List.iter nodes ~f:(fun j ->
                 let cost_ik = Hashtbl.find distance_map (i, k) in
                 let cost_kj = Hashtbl.find distance_map (k, j) in
                 let cost_ij = Hashtbl.find distance_map (i, j) in
                 match (cost_ik, cost_kj, cost_ij) with
-                | Some cost_ik, Some cost_kj, Some cost_ij ->
-                    if cost_ik + cost_kj < cost_ij then
-                      Hashtbl.set distance_map ~key:(i, j)
-                        ~data:(cost_ik + cost_kj)
-                | Some cost_ik, Some cost_kj, None ->
+                | Some cost_ik, Some cost_kj, Some cost_ij
+                  when cost_ik + cost_kj < cost_ij ->
                     Hashtbl.set distance_map ~key:(i, j)
                       ~data:(cost_ik + cost_kj)
-                | None, _, _ -> ()
-                | _, None, _ -> ())));
+                | Some cost_ik, Some cost_kj, None ->
+                    (* cost_ij = ∞ *)
+                    Hashtbl.set distance_map ~key:(i, j)
+                      ~data:(cost_ik + cost_kj)
+                | _ -> ())));
     distance_map
 
   let of_string (s : string) : t =
@@ -112,7 +104,11 @@ module Network = struct
              (v.name, v))
       |> Map.of_alist_exn (module String)
     in
-    let distance_map = floyd_warshall valve_map in
+    let nodes = Map.keys valve_map in
+    let edges =
+      Map.data valve_map |> List.map ~f:(fun v -> (v.name, v.successors))
+    in
+    let distance_map = floyd_warshall edges nodes in
     { valve_map; distance_map }
 
   let simulate (network : t) ~(steps : int) ~(parallelism : [ `One | `Two ]) :

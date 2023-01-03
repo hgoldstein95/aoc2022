@@ -16,83 +16,6 @@ let example =
   \        ......#.\n\n\
    10R5L5R10L4R5L5\n"
 
-module Grid = struct
-  module Point = struct
-    type t = { x : int; y : int } [@@deriving compare, hash, sexp]
-  end
-
-  module Delta = struct
-    type t = { dx : int; dy : int } [@@deriving compare, hash, sexp]
-
-    let move (delta : t) (coord : Point.t) : Point.t =
-      Point.{ x = coord.x + delta.dx; y = coord.y + delta.dy }
-  end
-
-  module Facing = struct
-    type t = North | South | East | West [@@deriving compare, hash, sexp]
-
-    let delta (facing : t) : Delta.t =
-      match facing with
-      | North -> { dx = 0; dy = -1 }
-      | South -> { dx = 0; dy = 1 }
-      | East -> { dx = 1; dy = 0 }
-      | West -> { dx = -1; dy = 0 }
-  end
-
-  module Turn = struct
-    type t = Left | Right [@@deriving compare, hash, sexp]
-
-    let turn (turn : t) (facing : Facing.t) : Facing.t =
-      match (turn, facing) with
-      | Left, North -> West
-      | Left, South -> East
-      | Left, East -> North
-      | Left, West -> South
-      | Right, North -> East
-      | Right, South -> West
-      | Right, East -> South
-      | Right, West -> North
-  end
-
-  type 'a t = { grid : 'a array array; width : int; height : int }
-  [@@deriving compare, sexp]
-
-  let of_string ~(parse_char : char -> 'a) (s : string) : 'a t =
-    let grid =
-      let lines = s |> String.split_lines in
-      let length =
-        List.map lines ~f:String.length
-        |> List.max_elt ~compare:Int.compare
-        |> Option.value_exn
-      in
-      lines
-      |> List.map ~f:(fun s -> s ^ String.make (length - String.length s) ' ')
-      |> List.map ~f:String.to_array
-      |> Array.of_list
-      |> Array.map ~f:(Array.map ~f:parse_char)
-    in
-    let width =
-      Array.map grid ~f:Array.length
-      |> Array.max_elt ~compare:Int.compare
-      |> Option.value_exn
-    in
-    { grid; width; height = Array.length grid }
-
-  exception Out_of_bounds
-
-  let get (g : 'a t) (coord : Point.t) : 'a option =
-    try Some g.grid.(coord.y).(coord.x) with Invalid_argument _ -> None
-
-  let get_exn (g : 'a t) (coord : Point.t) : 'a =
-    try g.grid.(coord.y).(coord.x)
-    with Invalid_argument _ -> raise Out_of_bounds
-
-  let wrap (g : 'a t) (coord : Point.t) : Point.t =
-    let x = (coord.x + g.width) % g.width in
-    let y = (coord.y + g.height) % g.height in
-    Point.{ x; y }
-end
-
 module Jungle = struct
   type item = Open | Wall | Off_map [@@deriving compare, sexp]
   type t = item Grid.t [@@deriving compare, sexp]
@@ -133,34 +56,75 @@ module Directions = struct
 end
 
 module Simulation = struct
-  type state = { coord : Grid.Point.t; facing : Grid.Facing.t }
-  [@@deriving compare, sexp]
+  type state = {
+    coord : Grid.Point.t;
+    facing : Grid.Facing.t;
+    cube : Cube.t option;
+  }
+  [@@deriving sexp]
 
-  let init (j : Jungle.t) =
+  let init ?cube (j : Jungle.t) =
     let x =
       j.grid.(0)
       |> Array.findi ~f:(fun _ -> function Jungle.Open -> true | _ -> false)
       |> Option.value_exn |> fst
     in
-    { coord = { x; y = 0 }; facing = Grid.Facing.East }
+    { coord = { x; y = 0 }; facing = Grid.Facing.East; cube }
+
+  let step jungle state n =
+    let rec loop s last i =
+      if i = 0 then s
+      else
+        let delta = Grid.Facing.delta s.facing in
+        let target = Grid.wrap jungle (Grid.Delta.move delta s.coord) in
+        match Grid.get_exn jungle target with
+        | Jungle.Wall -> { s with coord = last }
+        | Jungle.Open -> loop { s with coord = target } target (i - 1)
+        | Jungle.Off_map -> loop { s with coord = target } last i
+    in
+    loop state state.coord n
+
+  let step_cube jungle state n =
+    let rec loop s i =
+      if i = 0 then s
+      else
+        let cube = Option.value_exn s.cube in
+        let delta = Grid.Facing.delta s.facing in
+        let s_target =
+          let target = Grid.Delta.move delta s.coord in
+          match Grid.get jungle target with
+          | None | Some Jungle.Off_map ->
+              let turns, new_cube =
+                Cube.reorient
+                  (match state.facing with
+                  | North -> Cube.turn_down cube
+                  | South -> Cube.turn_up cube
+                  | East -> Cube.turn_right cube
+                  | West -> Cube.turn_left cube)
+              in
+              let new_facing = Grid.Facing.right ~n:turns s.facing in
+              let new_coord =
+                match (new_facing, state.facing) with _ -> failwith "TODO"
+              in
+              { coord = new_coord; facing = new_facing; cube = Some new_cube }
+          | _ -> state
+        in
+        match Grid.get_exn jungle s_target.coord with
+        | Jungle.Open -> loop s_target (i - 1)
+        | Jungle.Wall -> s_target
+        | _ -> failwith "Invalid cube state"
+    in
+    loop state n
 
   let run (jungle : Jungle.t) (directions : Directions.t) :
       Grid.Point.t * Grid.Facing.t =
     let rec loop state dirs =
       match dirs with
       | [] -> state
-      | `Move n :: rest ->
-          let rec step last c i =
-            if i = 0 then c
-            else
-              let delta = Grid.Facing.delta state.facing in
-              let target = Grid.wrap jungle (Grid.Delta.move delta c) in
-              match Grid.get_exn jungle target with
-              | Wall -> last
-              | Open -> step target target (i - 1)
-              | Off_map -> step last target i
-          in
-          loop { state with coord = step state.coord state.coord n } rest
+      | `Move n :: rest -> (
+          match state.cube with
+          | None -> loop (step jungle state n) rest
+          | Some _ -> loop (step_cube jungle state n) rest)
       | `Turn turn :: rest ->
           let facing = Grid.Turn.turn turn state.facing in
           loop { state with facing } rest
